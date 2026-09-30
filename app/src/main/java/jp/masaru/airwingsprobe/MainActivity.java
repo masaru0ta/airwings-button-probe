@@ -19,12 +19,17 @@ import android.widget.TextView;
 public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView status;
+    private TextView modeInfo;
     private TextView events;
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
-            boolean running = getPreferences(MODE_PRIVATE).getBoolean("running", false);
+            boolean running = ProbeService.isRunning;
             boolean remote = getPreferences(MODE_PRIVATE).getBoolean("remote", false);
-            status.setText(running ? (remote ? "検証中：音量取得実験モード" : "検証中：通常モード") : "停止中");
+            boolean playing = getPreferences(MODE_PRIVATE).getBoolean("playing", false);
+            status.setText(running ? (remote ? "音量取得実験モード" : "通常モード") + " / " + (playing ? "PLAY" : "PAUSE") : "停止中");
+            modeInfo.setText(remote
+                ? "実験モード：RemoteVolumeProvider の UP/DOWN が出た場合、音量変更要求がアプリへ直接届いています。システム音量の数値とは別の記録です。"
+                : "通常モード：システム音量の数値は定期的な監視結果です。数値が変わっても、イヤホンの音量キーがアプリへ直接届いたとは限りません。");
             events.setText(ProbeLog.read(MainActivity.this));
             handler.postDelayed(this, 500);
         }
@@ -46,7 +51,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView help = new TextView(this);
-        help.setText("AirWingsを接続し、開始後にイヤホンの音量＋／－、再生・停止を押してください。画面を消しても試せます。音量取得実験モードでは実際の音量が変わらない場合があります。");
+        help.setText("AirWingsを接続して操作を試してください。画面を消しても記録します。別の音楽アプリを使った後は、PLAY／PAUSEと音声フォーカス再取得を比較してください。");
         help.setTextSize(15);
         help.setPadding(0, pad / 2, 0, pad / 2);
         root.addView(help);
@@ -55,9 +60,17 @@ public class MainActivity extends Activity {
         status.setTextSize(16);
         root.addView(status);
 
+        modeInfo = new TextView(this);
+        modeInfo.setTextSize(14);
+        modeInfo.setPadding(0, pad / 3, 0, pad / 3);
+        root.addView(modeInfo);
+
         addButton(root, "通常モードで開始", v -> startProbe(false));
         addButton(root, "音量取得実験モードで開始", v -> startProbe(true));
-        addButton(root, "検証を停止", v -> startService(new Intent(this, ProbeService.class).setAction(ProbeService.ACTION_STOP)));
+        addButton(root, "PLAY状態にする", v -> sendAction(ProbeService.ACTION_PLAY));
+        addButton(root, "PAUSE状態にする", v -> sendAction(ProbeService.ACTION_PAUSE));
+        addButton(root, "音声フォーカスを再取得", v -> sendAction(ProbeService.ACTION_CLAIM_FOCUS));
+        addButton(root, "検証を停止", v -> sendAction(ProbeService.ACTION_STOP));
         addButton(root, "ログをコピー", v -> {
             ClipboardManager clip = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             clip.setPrimaryClip(ClipData.newPlainText("AirWings button log", ProbeLog.read(this)));
@@ -88,13 +101,21 @@ public class MainActivity extends Activity {
         startForegroundService(intent);
     }
 
+    private void sendAction(String action) {
+        if (!ProbeService.isRunning) {
+            ProbeLog.add(this, "先に検証モードを開始してください");
+            return;
+        }
+        startService(new Intent(this, ProbeService.class).setAction(action));
+    }
+
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         int code = event.getKeyCode();
         if (event.getAction() == KeyEvent.ACTION_DOWN &&
             (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN ||
              code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || code == KeyEvent.KEYCODE_HEADSETHOOK ||
              code == KeyEvent.KEYCODE_MEDIA_NEXT || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS)) {
-            ProbeLog.add(this, "画面: " + KeyEvent.keyCodeToString(code) + " repeat=" + event.getRepeatCount());
+            ProbeLog.add(this, "画面KeyEvent: " + KeyEvent.keyCodeToString(code) + " repeat=" + event.getRepeatCount());
         }
         return super.dispatchKeyEvent(event);
     }

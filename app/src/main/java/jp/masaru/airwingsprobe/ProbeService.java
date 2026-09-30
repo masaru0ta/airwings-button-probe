@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
@@ -19,13 +20,19 @@ import android.os.Looper;
 import android.view.KeyEvent;
 
 public class ProbeService extends Service {
+    static volatile boolean isRunning;
     static final String ACTION_START = "jp.masaru.airwingsprobe.START";
     static final String ACTION_STOP = "jp.masaru.airwingsprobe.STOP";
+    static final String ACTION_PLAY = "jp.masaru.airwingsprobe.PLAY";
+    static final String ACTION_PAUSE = "jp.masaru.airwingsprobe.PAUSE";
+    static final String ACTION_CLAIM_FOCUS = "jp.masaru.airwingsprobe.CLAIM_FOCUS";
     private static final String CHANNEL = "button_probe";
     private static final int NOTIFICATION_ID = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private MediaSession session;
     private AudioManager audioManager;
+    private AudioFocusRequest focusRequest;
+    private boolean hasFocusRequest;
     private AudioTrack silentTrack;
     private Thread audioThread;
     private volatile boolean audioRunning;
@@ -37,16 +44,22 @@ public class ProbeService extends Service {
         @Override public void run() {
             int now = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
             if (now != lastVolume) {
-                ProbeLog.add(ProbeService.this, "システム音量: " + lastVolume + " → " + now);
+                ProbeLog.add(ProbeService.this, "システム音量(監視): " + lastVolume + " → " + now);
                 lastVolume = now;
             }
-            handler.postDelayed(this, 300);
+            handler.postDelayed(this, 150);
         }
     };
 
     @Override public void onCreate() {
         super.onCreate();
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setOnAudioFocusChangeListener(change -> ProbeLog.add(this, "音声フォーカス変化: " + change))
+            .build();
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         manager.createNotificationChannel(new NotificationChannel(CHANNEL, "ボタン検証", NotificationManager.IMPORTANCE_LOW));
         session = new MediaSession(this, "AirWingsButtonProbe");
@@ -55,13 +68,13 @@ public class ProbeService extends Service {
             @Override public boolean onMediaButtonEvent(Intent intent) {
                 KeyEvent event = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
                 if (event != null && event.getAction() == KeyEvent.ACTION_DOWN)
-                    ProbeLog.add(ProbeService.this, "MediaSession入力: " + KeyEvent.keyCodeToString(event.getKeyCode()) + " repeat=" + event.getRepeatCount());
+                    ProbeLog.add(ProbeService.this, "MediaSession入力: " + KeyEvent.keyCodeToString(event.getKeyCode()) + " / state=" + (playing ? "PLAY" : "PAUSE") + " repeat=" + event.getRepeatCount());
                 return super.onMediaButtonEvent(intent);
             }
             @Override public void onPlay() { setPlaying(true, "再生コマンド"); }
             @Override public void onPause() { setPlaying(false, "停止コマンド"); }
-            @Override public void onSkipToNext() { ProbeLog.add(ProbeService.this, "次の記事コマンド"); }
-            @Override public void onSkipToPrevious() { ProbeLog.add(ProbeService.this, "前の記事コマンド"); }
+            @Override public void onSkipToNext() { ProbeLog.add(ProbeService.this, "次の記事コマンド / state=" + (playing ? "PLAY" : "PAUSE")); }
+            @Override public void onSkipToPrevious() { ProbeLog.add(ProbeService.this, "前の記事コマンド / state=" + (playing ? "PLAY" : "PAUSE")); }
             @Override public void onStop() { setPlaying(false, "停止コマンド"); }
         });
         session.setActive(true);
@@ -77,6 +90,24 @@ public class ProbeService extends Service {
             return START_NOT_STICKY;
         }
         startForeground(NOTIFICATION_ID, notification());
+        isRunning = true;
+        if (intent != null && ACTION_PLAY.equals(intent.getAction())) {
+            setPlaying(true, "画面からPLAY指定");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_PAUSE.equals(intent.getAction())) {
+            setPlaying(false, "画面からPAUSE指定");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_CLAIM_FOCUS.equals(intent.getAction())) {
+            int result = audioManager.requestAudioFocus(focusRequest);
+            hasFocusRequest = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+            ProbeLog.add(this, "音声フォーカス再取得: " + (hasFocusRequest ? "成功" : "失敗 (" + result + ")"));
+            session.setActive(false);
+            session.setActive(true);
+            setPlaying(true, "セッション再取得");
+            return START_NOT_STICKY;
+        }
         boolean requestedRemote = intent != null && intent.getBooleanExtra("remote", false);
         setRemoteMode(requestedRemote);
         setPlaying(true, "検証再開");
@@ -103,7 +134,8 @@ public class ProbeService extends Service {
             int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
             session.setPlaybackToRemote(new VolumeProvider(VolumeProvider.VOLUME_CONTROL_RELATIVE, max, current) {
                 @Override public void onAdjustVolume(int direction) {
-                    ProbeLog.add(ProbeService.this, "RemoteVolumeProvider: " + (direction > 0 ? "UP" : direction < 0 ? "DOWN" : "SAME") + " (" + direction + ")");
+                    if (direction != 0)
+                        ProbeLog.add(ProbeService.this, "RemoteVolumeProvider: " + (direction > 0 ? "UP" : "DOWN") + " (方向イベント)");
                 }
             });
         } else {
@@ -113,6 +145,7 @@ public class ProbeService extends Service {
 
     private void setPlaying(boolean value, String reason) {
         playing = value;
+        getSharedPreferences("MainActivity", MODE_PRIVATE).edit().putBoolean("playing", value).apply();
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE |
             PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_STOP;
         session.setPlaybackState(new PlaybackState.Builder()
@@ -150,7 +183,9 @@ public class ProbeService extends Service {
     }
 
     @Override public void onDestroy() {
+        isRunning = false;
         handler.removeCallbacks(volumePoll);
+        if (hasFocusRequest) audioManager.abandonAudioFocusRequest(focusRequest);
         audioRunning = false;
         if (silentTrack != null) {
             silentTrack.pause();
