@@ -17,6 +17,8 @@ import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 
 public class ProbeService extends Service {
@@ -30,6 +32,8 @@ public class ProbeService extends Service {
     static final String ACTION_STOP_TONE = "jp.masaru.airwingsprobe.STOP_TONE";
     static final String ACTION_RESTORE_VOLUME_ON = "jp.masaru.airwingsprobe.RESTORE_VOLUME_ON";
     static final String ACTION_RESTORE_VOLUME_OFF = "jp.masaru.airwingsprobe.RESTORE_VOLUME_OFF";
+    static final String ACTION_ALLOW_PHONE_KEYS_ON = "jp.masaru.airwingsprobe.ALLOW_PHONE_KEYS_ON";
+    static final String ACTION_ALLOW_PHONE_KEYS_OFF = "jp.masaru.airwingsprobe.ALLOW_PHONE_KEYS_OFF";
     private static final String CHANNEL = "button_probe";
     private static final int NOTIFICATION_ID = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -47,6 +51,19 @@ public class ProbeService extends Service {
     private int lastVolume = -1;
     private boolean restoreVolume;
     private int savedVolume;
+    private boolean allowPhoneKeys;
+    private static volatile long phoneKeyAt;
+    private static volatile int phoneKeyDirection;
+
+    static void noteForegroundVolumeKey(KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return;
+        int code = event.getKeyCode();
+        if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN) return;
+        InputDevice device = event.getDevice();
+        if (device == null || device.isExternal() || device.isVirtual()) return;
+        phoneKeyDirection = code == KeyEvent.KEYCODE_VOLUME_UP ? 1 : -1;
+        phoneKeyAt = SystemClock.elapsedRealtime();
+    }
 
     private final Runnable volumePoll = new Runnable() {
         @Override public void run() {
@@ -55,15 +72,23 @@ public class ProbeService extends Service {
                 ProbeLog.add(ProbeService.this, "システム音量(監視): " + lastVolume + " → " + now);
                 lastVolume = now;
                 if (restoreVolume && now != savedVolume) {
-                    ProbeLog.add(ProbeService.this, "音量操作を推定: " + (now > savedVolume ? "UP" : "DOWN") +
-                        " / " + now + " → " + savedVolume + " に復元要求");
-                    try {
-                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0);
-                        ProbeLog.add(ProbeService.this, "音量復元後の読取値: " +
-                            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC));
-                    } catch (SecurityException error) {
-                        restoreVolume = false;
-                        ProbeLog.add(ProbeService.this, "音量復元失敗: " + error.getClass().getSimpleName());
+                    int direction = now > savedVolume ? 1 : -1;
+                    long age = SystemClock.elapsedRealtime() - phoneKeyAt;
+                    if (allowPhoneKeys && age >= 0 && age <= 350 && direction == phoneKeyDirection) {
+                        ProbeLog.add(ProbeService.this, "内蔵キーとして音量変更を許可: " + savedVolume + " → " + now);
+                        savedVolume = now;
+                        phoneKeyAt = 0;
+                    } else {
+                        ProbeLog.add(ProbeService.this, "音量操作を推定: " + (direction > 0 ? "UP" : "DOWN") +
+                            " / " + now + " → " + savedVolume + " に復元要求");
+                        try {
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0);
+                            ProbeLog.add(ProbeService.this, "音量復元後の読取値: " +
+                                audioManager.getStreamVolume(AudioManager.STREAM_MUSIC));
+                        } catch (SecurityException error) {
+                            restoreVolume = false;
+                            ProbeLog.add(ProbeService.this, "音量復元失敗: " + error.getClass().getSimpleName());
+                        }
                     }
                 }
             }
@@ -157,6 +182,16 @@ public class ProbeService extends Service {
         if (intent != null && ACTION_RESTORE_VOLUME_OFF.equals(intent.getAction())) {
             restoreVolume = false;
             ProbeLog.add(this, "音量復元OFF");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_ALLOW_PHONE_KEYS_ON.equals(intent.getAction())) {
+            allowPhoneKeys = true;
+            ProbeLog.add(this, "画面表示中の内蔵キーを復元から除外: ON");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_ALLOW_PHONE_KEYS_OFF.equals(intent.getAction())) {
+            allowPhoneKeys = false;
+            ProbeLog.add(this, "画面表示中の内蔵キーを復元から除外: OFF");
             return START_NOT_STICKY;
         }
         boolean requestedRemote = intent != null && intent.getBooleanExtra("remote", false);

@@ -2,6 +2,7 @@ package jp.masaru.airwingsprobe;
 
 import android.content.Context;
 import android.view.KeyEvent;
+import android.view.InputDevice;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,8 +40,12 @@ final class ProbeLog {
         if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN ||
             code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || code == KeyEvent.KEYCODE_HEADSETHOOK ||
             code == KeyEvent.KEYCODE_MEDIA_NEXT || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+            InputDevice device = event.getDevice();
             add(context, "画面KeyEvent: " + KeyEvent.keyCodeToString(code) +
                 " repeat=" + event.getRepeatCount() + " device=" + event.getDeviceId() +
+                " name=" + (device == null ? "不明" : device.getName()) +
+                " external=" + (device == null ? "不明" : device.isExternal()) +
+                " virtual=" + (device == null ? "不明" : device.isVirtual()) +
                 " scan=" + event.getScanCode() + " source=0x" + Integer.toHexString(event.getSource()));
         }
     }

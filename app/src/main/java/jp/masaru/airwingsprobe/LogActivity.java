@@ -77,6 +77,7 @@ public class LogActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         ProbeLog.foregroundKey(this, event);
+        ProbeService.noteForegroundVolumeKey(event);
         return super.dispatchKeyEvent(event);
     }
 }

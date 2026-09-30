@@ -76,6 +76,8 @@ public class MainActivity extends Activity {
         addButton(root, "試験音を停止", v -> sendAction(ProbeService.ACTION_STOP_TONE));
         addButton(root, "現在の音量を固定して復元ON", v -> sendAction(ProbeService.ACTION_RESTORE_VOLUME_ON));
         addButton(root, "音量復元OFF", v -> sendAction(ProbeService.ACTION_RESTORE_VOLUME_OFF));
+        addButton(root, "画面表示中の本体キーは復元しない", v -> sendAction(ProbeService.ACTION_ALLOW_PHONE_KEYS_ON));
+        addButton(root, "本体キーの除外をOFF", v -> sendAction(ProbeService.ACTION_ALLOW_PHONE_KEYS_OFF));
         addButton(root, "検証を停止", v -> sendAction(ProbeService.ACTION_STOP));
         addButton(root, "ログを全画面で見る", v -> startActivity(new Intent(this, LogActivity.class)));
         addButton(root, "ログを消去", v -> ProbeLog.clear(this));
@@ -112,6 +114,7 @@ public class MainActivity extends Activity {
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         ProbeLog.foregroundKey(this, event);
+        ProbeService.noteForegroundVolumeKey(event);
         return super.dispatchKeyEvent(event);
     }
 
