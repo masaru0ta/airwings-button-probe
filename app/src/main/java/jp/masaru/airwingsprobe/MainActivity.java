@@ -74,6 +74,8 @@ public class MainActivity extends Activity {
         addButton(root, "音声フォーカスだけ取得", v -> sendAction(ProbeService.ACTION_CLAIM_FOCUS));
         addButton(root, "試験音を再生", v -> sendAction(ProbeService.ACTION_START_TONE));
         addButton(root, "試験音を停止", v -> sendAction(ProbeService.ACTION_STOP_TONE));
+        addButton(root, "現在の音量を固定して復元ON", v -> sendAction(ProbeService.ACTION_RESTORE_VOLUME_ON));
+        addButton(root, "音量復元OFF", v -> sendAction(ProbeService.ACTION_RESTORE_VOLUME_OFF));
         addButton(root, "検証を停止", v -> sendAction(ProbeService.ACTION_STOP));
         addButton(root, "ログを全画面で見る", v -> startActivity(new Intent(this, LogActivity.class)));
         addButton(root, "ログを消去", v -> ProbeLog.clear(this));

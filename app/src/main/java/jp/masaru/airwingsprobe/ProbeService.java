@@ -28,6 +28,8 @@ public class ProbeService extends Service {
     static final String ACTION_CLAIM_FOCUS = "jp.masaru.airwingsprobe.CLAIM_FOCUS";
     static final String ACTION_START_TONE = "jp.masaru.airwingsprobe.START_TONE";
     static final String ACTION_STOP_TONE = "jp.masaru.airwingsprobe.STOP_TONE";
+    static final String ACTION_RESTORE_VOLUME_ON = "jp.masaru.airwingsprobe.RESTORE_VOLUME_ON";
+    static final String ACTION_RESTORE_VOLUME_OFF = "jp.masaru.airwingsprobe.RESTORE_VOLUME_OFF";
     private static final String CHANNEL = "button_probe";
     private static final int NOTIFICATION_ID = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -43,6 +45,8 @@ public class ProbeService extends Service {
     private boolean remote;
     private boolean playing = true;
     private int lastVolume = -1;
+    private boolean restoreVolume;
+    private int savedVolume;
 
     private final Runnable volumePoll = new Runnable() {
         @Override public void run() {
@@ -50,6 +54,18 @@ public class ProbeService extends Service {
             if (now != lastVolume) {
                 ProbeLog.add(ProbeService.this, "システム音量(監視): " + lastVolume + " → " + now);
                 lastVolume = now;
+                if (restoreVolume && now != savedVolume) {
+                    ProbeLog.add(ProbeService.this, "音量操作を推定: " + (now > savedVolume ? "UP" : "DOWN") +
+                        " / " + now + " → " + savedVolume + " に復元要求");
+                    try {
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedVolume, 0);
+                        ProbeLog.add(ProbeService.this, "音量復元後の読取値: " +
+                            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC));
+                    } catch (SecurityException error) {
+                        restoreVolume = false;
+                        ProbeLog.add(ProbeService.this, "音量復元失敗: " + error.getClass().getSimpleName());
+                    }
+                }
             }
             handler.postDelayed(this, 150);
         }
@@ -129,6 +145,18 @@ public class ProbeService extends Service {
                 audioManager.abandonAudioFocusRequest(focusRequest);
                 hasFocusRequest = false;
             }
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_RESTORE_VOLUME_ON.equals(intent.getAction())) {
+            savedVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            lastVolume = savedVolume;
+            restoreVolume = true;
+            ProbeLog.add(this, "音量復元ON: 基準値=" + savedVolume);
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_RESTORE_VOLUME_OFF.equals(intent.getAction())) {
+            restoreVolume = false;
+            ProbeLog.add(this, "音量復元OFF");
             return START_NOT_STICKY;
         }
         boolean requestedRemote = intent != null && intent.getBooleanExtra("remote", false);
