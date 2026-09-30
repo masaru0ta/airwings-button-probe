@@ -1,9 +1,6 @@
 package jp.masaru.airwingsprobe;
 
 import android.app.Activity;
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -27,10 +24,11 @@ public class MainActivity extends Activity {
             boolean remote = getPreferences(MODE_PRIVATE).getBoolean("remote", false);
             boolean playing = getPreferences(MODE_PRIVATE).getBoolean("playing", false);
             status.setText(running ? (remote ? "音量取得実験モード" : "通常モード") + " / " + (playing ? "PLAY" : "PAUSE") : "停止中");
-            modeInfo.setText(remote
-                ? "実験モード：RemoteVolumeProvider の UP/DOWN が出た場合、音量変更要求がアプリへ直接届いています。システム音量の数値とは別の記録です。"
-                : "通常モード：システム音量の数値は定期的な監視結果です。数値が変わっても、イヤホンの音量キーがアプリへ直接届いたとは限りません。");
-            events.setText(ProbeLog.read(MainActivity.this));
+            modeInfo.setText(!running ? "検証モードを開始してください。"
+                : remote ? "実験モード：RemoteVolumeProvider の UP/DOWN はアプリへ直接届いた音量変更要求です。"
+                : "通常モード：システム音量の数値は定期的な監視結果です。キー入力が直接届いた証拠ではありません。");
+            String latest = ProbeLog.lastLine(MainActivity.this);
+            if (!latest.contentEquals(events.getText())) events.setText(latest);
             handler.postDelayed(this, 500);
         }
     };
@@ -42,7 +40,11 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(pad, pad, pad, pad);
         root.setBackgroundColor(Color.rgb(246, 248, 250));
-        setContentView(root);
+        ScrollView page = new ScrollView(this);
+        page.setFillViewport(true);
+        page.setFitsSystemWindows(true);
+        page.addView(root);
+        setContentView(page);
 
         TextView title = new TextView(this);
         title.setText("AirWings ボタン検証");
@@ -51,7 +53,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView help = new TextView(this);
-        help.setText("AirWingsを接続して操作を試してください。画面を消しても記録します。別の音楽アプリを使った後は、PLAY／PAUSEと音声フォーカス再取得を比較してください。");
+        help.setText("AirWingsの操作を記録します。ログは全画面で手動更新できます。試験音を流すと、実際の音声再生中の受信を比較できます。");
         help.setTextSize(15);
         help.setPadding(0, pad / 2, 0, pad / 2);
         root.addView(help);
@@ -69,22 +71,19 @@ public class MainActivity extends Activity {
         addButton(root, "音量取得実験モードで開始", v -> startProbe(true));
         addButton(root, "PLAY状態にする", v -> sendAction(ProbeService.ACTION_PLAY));
         addButton(root, "PAUSE状態にする", v -> sendAction(ProbeService.ACTION_PAUSE));
-        addButton(root, "音声フォーカスを再取得", v -> sendAction(ProbeService.ACTION_CLAIM_FOCUS));
+        addButton(root, "音声フォーカスだけ取得", v -> sendAction(ProbeService.ACTION_CLAIM_FOCUS));
+        addButton(root, "試験音を再生", v -> sendAction(ProbeService.ACTION_START_TONE));
+        addButton(root, "試験音を停止", v -> sendAction(ProbeService.ACTION_STOP_TONE));
         addButton(root, "検証を停止", v -> sendAction(ProbeService.ACTION_STOP));
-        addButton(root, "ログをコピー", v -> {
-            ClipboardManager clip = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-            clip.setPrimaryClip(ClipData.newPlainText("AirWings button log", ProbeLog.read(this)));
-        });
+        addButton(root, "ログを全画面で見る", v -> startActivity(new Intent(this, LogActivity.class)));
         addButton(root, "ログを消去", v -> ProbeLog.clear(this));
 
-        ScrollView scroll = new ScrollView(this);
         events = new TextView(this);
-        events.setTextSize(13);
-        events.setTextIsSelectable(true);
+        events.setTextSize(14);
+        events.setMaxLines(3);
         events.setPadding(pad / 2, pad / 2, pad / 2, pad / 2);
         events.setBackgroundColor(Color.WHITE);
-        scroll.addView(events);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        root.addView(events);
     }
 
     private void addButton(LinearLayout root, String label, View.OnClickListener listener) {
@@ -110,13 +109,7 @@ public class MainActivity extends Activity {
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
-        int code = event.getKeyCode();
-        if (event.getAction() == KeyEvent.ACTION_DOWN &&
-            (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN ||
-             code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || code == KeyEvent.KEYCODE_HEADSETHOOK ||
-             code == KeyEvent.KEYCODE_MEDIA_NEXT || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS)) {
-            ProbeLog.add(this, "画面KeyEvent: " + KeyEvent.keyCodeToString(code) + " repeat=" + event.getRepeatCount());
-        }
+        ProbeLog.foregroundKey(this, event);
         return super.dispatchKeyEvent(event);
     }
 

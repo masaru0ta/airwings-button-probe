@@ -1,6 +1,7 @@
 package jp.masaru.airwingsprobe;
 
 import android.content.Context;
+import android.view.KeyEvent;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -22,12 +23,26 @@ final class ProbeLog {
 
     static synchronized String read(Context context) {
         try {
-            String contents = new String(Files.readAllBytes(new File(context.getFilesDir(), FILE_NAME).toPath()), StandardCharsets.UTF_8);
-            String[] lines = contents.split("\n");
-            StringBuilder result = new StringBuilder();
-            for (int i = Math.max(0, lines.length - 100); i < lines.length; i++) result.append(lines[i]).append('\n');
-            return result.toString();
+            return new String(Files.readAllBytes(new File(context.getFilesDir(), FILE_NAME).toPath()), StandardCharsets.UTF_8);
         } catch (Exception ignored) { return "まだ入力はありません。"; }
+    }
+
+    static String lastLine(Context context) {
+        String contents = read(context).trim();
+        int start = contents.lastIndexOf('\n');
+        return start < 0 ? contents : contents.substring(start + 1);
+    }
+
+    static void foregroundKey(Context context, KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN) return;
+        int code = event.getKeyCode();
+        if (code == KeyEvent.KEYCODE_VOLUME_UP || code == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || code == KeyEvent.KEYCODE_HEADSETHOOK ||
+            code == KeyEvent.KEYCODE_MEDIA_NEXT || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS) {
+            add(context, "画面KeyEvent: " + KeyEvent.keyCodeToString(code) +
+                " repeat=" + event.getRepeatCount() + " device=" + event.getDeviceId() +
+                " scan=" + event.getScanCode() + " source=0x" + Integer.toHexString(event.getSource()));
+        }
     }
 
     static synchronized void clear(Context context) {

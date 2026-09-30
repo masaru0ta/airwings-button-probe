@@ -26,6 +26,8 @@ public class ProbeService extends Service {
     static final String ACTION_PLAY = "jp.masaru.airwingsprobe.PLAY";
     static final String ACTION_PAUSE = "jp.masaru.airwingsprobe.PAUSE";
     static final String ACTION_CLAIM_FOCUS = "jp.masaru.airwingsprobe.CLAIM_FOCUS";
+    static final String ACTION_START_TONE = "jp.masaru.airwingsprobe.START_TONE";
+    static final String ACTION_STOP_TONE = "jp.masaru.airwingsprobe.STOP_TONE";
     private static final String CHANNEL = "button_probe";
     private static final int NOTIFICATION_ID = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -36,6 +38,7 @@ public class ProbeService extends Service {
     private AudioTrack silentTrack;
     private Thread audioThread;
     private volatile boolean audioRunning;
+    private volatile boolean toneEnabled;
     private boolean remote;
     private boolean playing = true;
     private int lastVolume = -1;
@@ -68,7 +71,10 @@ public class ProbeService extends Service {
             @Override public boolean onMediaButtonEvent(Intent intent) {
                 KeyEvent event = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
                 if (event != null && event.getAction() == KeyEvent.ACTION_DOWN)
-                    ProbeLog.add(ProbeService.this, "MediaSession入力: " + KeyEvent.keyCodeToString(event.getKeyCode()) + " / state=" + (playing ? "PLAY" : "PAUSE") + " repeat=" + event.getRepeatCount());
+                    ProbeLog.add(ProbeService.this, "MediaSession入力: " + KeyEvent.keyCodeToString(event.getKeyCode()) +
+                        " / state=" + (playing ? "PLAY" : "PAUSE") + " repeat=" + event.getRepeatCount() +
+                        " device=" + event.getDeviceId() + " scan=" + event.getScanCode() +
+                        " source=0x" + Integer.toHexString(event.getSource()));
                 return super.onMediaButtonEvent(intent);
             }
             @Override public void onPlay() { setPlaying(true, "再生コマンド"); }
@@ -100,12 +106,28 @@ public class ProbeService extends Service {
             return START_NOT_STICKY;
         }
         if (intent != null && ACTION_CLAIM_FOCUS.equals(intent.getAction())) {
-            int result = audioManager.requestAudioFocus(focusRequest);
-            hasFocusRequest = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
-            ProbeLog.add(this, "音声フォーカス再取得: " + (hasFocusRequest ? "成功" : "失敗 (" + result + ")"));
+            claimAudioFocus();
+            ProbeLog.add(this, "音声フォーカス取得はメディアボタンの宛先変更を保証しません");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_START_TONE.equals(intent.getAction())) {
+            claimAudioFocus();
             session.setActive(false);
             session.setActive(true);
-            setPlaying(true, "セッション再取得");
+            setPlaying(true, "試験音再生");
+            toneEnabled = true;
+            if (silentTrack != null) silentTrack.setVolume(0.4f);
+            ProbeLog.add(this, "試験音を再生開始 (小さな電子音)");
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_STOP_TONE.equals(intent.getAction())) {
+            toneEnabled = false;
+            if (silentTrack != null) silentTrack.setVolume(0f);
+            setPlaying(false, "試験音停止");
+            if (hasFocusRequest) {
+                audioManager.abandonAudioFocusRequest(focusRequest);
+                hasFocusRequest = false;
+            }
             return START_NOT_STICKY;
         }
         boolean requestedRemote = intent != null && intent.getBooleanExtra("remote", false);
@@ -114,6 +136,12 @@ public class ProbeService extends Service {
         getSharedPreferences("MainActivity", MODE_PRIVATE).edit().putBoolean("running", true).putBoolean("remote", remote).apply();
         ProbeLog.add(this, "検証開始: " + (remote ? "音量取得実験" : "通常") + " / 最大音量=" + audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
         return START_NOT_STICKY;
+    }
+
+    private void claimAudioFocus() {
+        int result = audioManager.requestAudioFocus(focusRequest);
+        hasFocusRequest = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        ProbeLog.add(this, "音声フォーカス取得: " + (hasFocusRequest ? "成功" : "失敗 (" + result + ")"));
     }
 
     private Notification notification() {
@@ -173,9 +201,18 @@ public class ProbeService extends Service {
         audioRunning = true;
         silentTrack.play();
         audioThread = new Thread(() -> {
-            byte[] zeros = new byte[1600];
+            byte[] samples = new byte[1600];
+            long sampleIndex = 0;
             while (audioRunning) {
-                try { silentTrack.write(zeros, 0, zeros.length); }
+                for (int i = 0; i < samples.length / 2; i++) {
+                    short value = toneEnabled && sampleIndex % sampleRate < sampleRate / 5
+                        ? (short) (Math.sin(2 * Math.PI * 440 * sampleIndex / sampleRate) * 2800)
+                        : 0;
+                    samples[i * 2] = (byte) value;
+                    samples[i * 2 + 1] = (byte) (value >> 8);
+                    sampleIndex++;
+                }
+                try { silentTrack.write(samples, 0, samples.length); }
                 catch (Exception error) { break; }
             }
         }, "silent-media-probe");
