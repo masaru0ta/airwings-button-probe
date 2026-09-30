@@ -39,6 +39,7 @@ public class ProbeService extends Service {
     private Thread audioThread;
     private volatile boolean audioRunning;
     private volatile boolean toneEnabled;
+    private boolean toneArmed;
     private boolean remote;
     private boolean playing = true;
     private int lastVolume = -1;
@@ -79,7 +80,7 @@ public class ProbeService extends Service {
             }
             @Override public void onPlay() { setPlaying(true, "再生コマンド"); }
             @Override public void onPause() { setPlaying(false, "停止コマンド"); }
-            @Override public void onSkipToNext() { ProbeLog.add(ProbeService.this, "次の記事コマンド / state=" + (playing ? "PLAY" : "PAUSE")); }
+            @Override public void onSkipToNext() { ProbeLog.add(ProbeService.this, "次の記事コマンド / state=" + (playing ? "PLAY" : "PAUSE") + " / tone=" + (toneEnabled ? "ON" : "OFF")); }
             @Override public void onSkipToPrevious() { ProbeLog.add(ProbeService.this, "前の記事コマンド / state=" + (playing ? "PLAY" : "PAUSE")); }
             @Override public void onStop() { setPlaying(false, "停止コマンド"); }
         });
@@ -114,14 +115,14 @@ public class ProbeService extends Service {
             claimAudioFocus();
             session.setActive(false);
             session.setActive(true);
+            toneArmed = true;
             setPlaying(true, "試験音再生");
-            toneEnabled = true;
             if (silentTrack != null) silentTrack.setVolume(0.4f);
             ProbeLog.add(this, "試験音を再生開始 (小さな電子音)");
             return START_NOT_STICKY;
         }
         if (intent != null && ACTION_STOP_TONE.equals(intent.getAction())) {
-            toneEnabled = false;
+            toneArmed = false;
             if (silentTrack != null) silentTrack.setVolume(0f);
             setPlaying(false, "試験音停止");
             if (hasFocusRequest) {
@@ -173,6 +174,11 @@ public class ProbeService extends Service {
 
     private void setPlaying(boolean value, String reason) {
         playing = value;
+        toneEnabled = toneArmed && value;
+        if (silentTrack != null) {
+            if (value && silentTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) silentTrack.play();
+            else if (!value && silentTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) silentTrack.pause();
+        }
         getSharedPreferences("MainActivity", MODE_PRIVATE).edit().putBoolean("playing", value).apply();
         long actions = PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_PLAY_PAUSE |
             PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS | PlaybackState.ACTION_STOP;
@@ -180,7 +186,9 @@ public class ProbeService extends Service {
             .setActions(actions)
             .setState(value ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED, 0, 1f)
             .build());
-        ProbeLog.add(this, reason + ": " + (value ? "PLAY" : "PAUSE"));
+        ProbeLog.add(this, reason + ": " + (value ? "PLAY" : "PAUSE") +
+            " / 試験音=" + (toneEnabled ? "ON" : "OFF") +
+            " / AudioTrack=" + (silentTrack == null ? "なし" : silentTrack.getPlayState()));
     }
 
     private void startSilentPlayback() {
